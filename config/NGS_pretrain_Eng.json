@@ -1,6 +1,6 @@
 {
   "dataset_reader": {
-    "type": "s2s_manual_reader",
+    "type": "pretrain_reader_english",
     "tokenizer": {
       "word_splitter":{
         "type": "just_spaces"
@@ -17,9 +17,9 @@
       }
     },
   },
-  "train_data_path": "data/GeoQA2.2/train.pk",
-  "validation_data_path": "data/GeoQA2.2/dev.pk",
-  "test_data_path" : "data/GeoQA2.2/test.pk",
+  "train_data_path": ["data/GeoQA_English/train.pk"],// "data/Proving/train.pk"],
+  "validation_data_path": ["data/GeoQA_English/dev.pk"],// "data/Proving/dev.pk"],
+  "test_data_path" : ["data/GeoQA_English/test.pk"],// "data/Proving/test.pk"],
   "evaluate_on_test": true,
   "model": {
     "type": "geo_s2s",
@@ -28,9 +28,8 @@
     "target_embedding_dim": 512,
     "scheduled_sampling_ratio": 0,
     "resnet_pretrained": "data/pretrain/best_jigsaw_model_state_dict",
-    "solving_pretrained": "save/simplified_solving_10250/best.th",
 //    "resnet_pretrained": "None",
-    "knowledge_points_ratio": 0,  // knowledge points
+    "knowledge_points_ratio": 1,  // knowledge points
     "source_embedder": {
       "token_embedders": {
         "tokens": {
