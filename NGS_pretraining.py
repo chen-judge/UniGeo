@@ -85,6 +85,7 @@ class SimpleSeq2Seq(Model):
             self._bleu = None
         self._acc = Average()
         self._no_result = Average()
+        self._mask_loss = Average()
 
         # remember to clear after evaluation
         self.new_acc = []
@@ -154,6 +155,10 @@ class SimpleSeq2Seq(Model):
             self.points_proj = nn.Linear(__C.FLAT_OUT_SIZE, 50)
             self.points_criterion = nn.BCELoss()
 
+        # NLU pretraining
+        self.mask_layer = nn.Linear(512, num_classes)
+        self.mask_loss = nn.NLLLoss(reduction='none')
+
     def take_step(self,
                   last_predictions: torch.Tensor,
                   state: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -197,7 +202,7 @@ class SimpleSeq2Seq(Model):
 
     @overrides
     def forward(self,  # type: ignore
-                image,
+                image, # masked_text, mask_label,
                 source_tokens: Dict[str, torch.LongTensor],
                 target_tokens: Dict[str, torch.LongTensor] = None, **kwargs) -> Dict[str, torch.Tensor]:
         # pylint: disable=arguments-differ
@@ -217,6 +222,7 @@ class SimpleSeq2Seq(Model):
         -------
         Dict[str, torch.Tensor]
         """
+
         bs = len(image)
         state = self._encode(source_tokens)
 
@@ -240,6 +246,18 @@ class SimpleSeq2Seq(Model):
         # decode
         state = self._init_decoder_state(state, lang_feats, img_feats, img_mask)
         output_dict = self._forward_loop(state, target_tokens)  # recurrent decoding for LSTM
+
+        # NLU pretraining
+        # masked_state = self._encode(masked_text)
+        # masked_lang_feats = masked_state['encoder_outputs']
+        # mask_prediction = self.mask_layer(masked_lang_feats)
+        # mask_prediction = F.log_softmax(mask_prediction, dim=-1)
+        # mask_loss = self.mask_loss(mask_prediction.transpose(1, 2), source_tokens['tokens'][:, :mask_prediction.shape[1]])
+        # output_dict["mask_loss"] = torch.sum(mask_loss*mask_label)/len(mask_label)
+        # self._mask_loss(output_dict["mask_loss"].item())
+        # output_dict["loss"] += output_dict["mask_loss"]
+
+
 
         if not self.training:
             state = self._init_decoder_state(state, lang_feats, img_feats, img_mask)  # TODO
@@ -597,5 +615,6 @@ class SimpleSeq2Seq(Model):
             all_metrics.update(self._bleu.get_metric(reset=reset))
         all_metrics.update({'acc': self._acc.get_metric(reset=reset)})
         all_metrics.update({'no_result': self._no_result.get_metric(reset=reset)})
+        all_metrics.update({'mask_loss': self._mask_loss.get_metric(reset=reset)})
 
         return all_metrics
