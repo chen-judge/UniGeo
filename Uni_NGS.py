@@ -81,20 +81,24 @@ class SimpleSeq2Seq(Model):
 
         if use_bleu:
             pad_index = self.vocab.get_token_index(self.vocab._padding_token, self._target_namespace)  # pylint: disable=protected-access
+            self.calculation_bleu = BLEU(ngram_weights=(1, 0, 0, 0), exclude_indices={pad_index, self._end_index, self._start_index})
             self._bleu = BLEU(ngram_weights=(1, 0, 0, 0), exclude_indices={pad_index, self._end_index, self._start_index})
         else:
+            self.calculation_bleu = None
             self._bleu = None
-        self._acc = Average()
-        self._no_result = Average()
+        self.calculation_acc = Average()
+        self.calculation_no_result = Average()
+        self.proving_acc = Average()
+        self.proving_no_result = Average()
         self._mask_loss = Average()
 
         # remember to clear after evaluation
-        self.new_acc = []
-        self.angle = []
-        self.length = []
-        self.area = []
-        self.other = []
-        self.point_acc_list = []
+        # self.new_acc = []
+        # self.angle = []
+        # self.length = []
+        # self.area = []
+        # self.other = []
+        # self.point_acc_list = []
 
         # At prediction time, we use a beam search to find the most likely sequence of target tokens.
         beam_size = beam_size or 1
@@ -228,7 +232,9 @@ class SimpleSeq2Seq(Model):
 
     @overrides
     def forward(self,  # type: ignore
-                image, problem_form, # masked_text, mask_label,
+                image,
+                problem_form, # masked_text, mask_label,
+                source_nums, choice_nums, label,
                 source_tokens: Dict[str, torch.LongTensor],
                 target_tokens: Dict[str, torch.LongTensor] = None, **kwargs) -> Dict[str, torch.Tensor]:
         # pylint: disable=arguments-differ
@@ -288,56 +294,86 @@ class SimpleSeq2Seq(Model):
             predictions = self._forward_beam_search(state)
             output_dict.update(predictions)
 
-            if target_tokens and self._bleu:
+            if target_tokens and self.calculation_bleu:
                 # shape: (batch_size, beam_size, max_sequence_length)
                 top_k_predictions = output_dict["predictions"]
 
                 # execute the decode programs to calculate the accuracy
-                # suc_knt, no_knt = 0, 0
-                suc_knt, no_knt, = 0, 0
+                # proving_suc_knt, proving_no_knt = 0, 0
+                proving_suc_knt, proving_no_knt, = 0, 0
+                calculate_suc_knt, calculate_no_knt, = 0, 0
 
                 selected_programs = []
                 for b in range(bs):
-                    hypo = None
-                    success = None
-                    for i in range(self._beam_search.beam_size):
-                        if success is not None:
-                            break
-                        hypo = list(top_k_predictions[b][i])
-                        if self._end_index in list(hypo):
-                            hypo = hypo[:hypo.index(self._end_index)]
-                        hypo = [self.vocab.get_token_from_index(idx.item()) for idx in hypo]
-
-                        target = list(target_tokens["tokens"][b])
-                        if self._end_index in target:
-                            target = target[:target.index(self._end_index)]
-                        if self._start_index in target:
-                            target = target[1:]
-                        target = [self.vocab.get_token_from_index(idx.item()) for idx in target]
-
-                        if hypo == target:
-                            success = True
-
-                    selected_programs.append([hypo])
-
-                    if success is None:
-                        no_knt += 1
+                    if problem_form[b] is None:
+                        choice = self.evaluate_calculation(top_k_predictions[b], choice_nums[b], source_nums[b])
+                        if choice is None:
+                            # no_knt += 1
+                            self.calculation_acc(0)
+                            self.calculation_no_result(1.0)
+                        elif choice == label[b]:
+                            # suc_knt += 1
+                            self.calculation_acc(1.0)
+                            self.calculation_no_result(0)
+                        else:
+                            self.calculation_acc(0)
+                            self.calculation_no_result(0)
                     else:
-                        suc_knt += 1
-
-                if random.random() < 0.05:
-                    print('selected_programs', selected_programs)
+                        assert problem_form[b] == 'proving'
+                        success = self.evaluate_proving(top_k_predictions[b], target_tokens["tokens"][b])
+                        if success is None:
+                            # proving_no_knt += 1
+                            self.proving_acc(0)
+                            self.proving_no_result(1.0)
+                        else:
+                            # proving_suc_knt += 1
+                            self.proving_acc(1.0)
+                            self.proving_no_result(0)
 
                 # calculate BLEU
                 best_predictions = top_k_predictions[:, 0, :]
-                # print(top_k_predictions)
-                # print(best_predictions)
-                # print(target_tokens["tokens"])
-                # exit()
                 self._bleu(best_predictions, target_tokens["tokens"])
-                self._acc(suc_knt / bs)
-                self._no_result(no_knt / bs)
 
+
+                # selected_programs = []
+                # for b in range(bs):
+                #     hypo = None
+                #     success = None
+                #     for i in range(self._beam_search.beam_size):
+                #         if success is not None:
+                #             break
+                #         hypo = list(top_k_predictions[b][i])
+                #         if self._end_index in list(hypo):
+                #             hypo = hypo[:hypo.index(self._end_index)]
+                #         hypo = [self.vocab.get_token_from_index(idx.item()) for idx in hypo]
+                #
+                #         target = list(target_tokens["tokens"][b])
+                #
+                #         if self._end_index in target:
+                #             target = target[:target.index(self._end_index)]
+                #         if self._start_index in target:
+                #             target = target[1:]
+                #         target = [self.vocab.get_token_from_index(idx.item()) for idx in target]
+                #
+                #
+                #         if hypo == target:
+                #             success = True
+                #
+                #     selected_programs.append([hypo])
+                #
+                #     if success is None:
+                #         proving_no_knt += 1
+                #     else:
+                #         proving_suc_knt += 1
+                #
+                # if random.random() < 0.05:
+                #     print('selected_programs', selected_programs)
+                #
+                # # calculate BLEU
+                # best_predictions = top_k_predictions[:, 0, :]
+                # self._bleu(best_predictions, target_tokens["tokens"])
+                # self.proving_acc(proving_suc_knt / bs)
+                # self.proving_no_result(proving_no_knt / bs)
 
         return output_dict
 
@@ -590,6 +626,57 @@ class SimpleSeq2Seq(Model):
 
         return acc_sum
 
+    def evaluate_proving(self, top_k_predictions, target_tokens):
+        hypo = None
+        success = None
+        for i in range(self._beam_search.beam_size):
+            if success is not None:
+                break
+            hypo = list(top_k_predictions[i])
+            if self._end_index in list(hypo):
+                hypo = hypo[:hypo.index(self._end_index)]
+            hypo = [self.vocab.get_token_from_index(idx.item()) for idx in hypo]
+
+            target = list(target_tokens)
+            if self._end_index in target:
+                target = target[:target.index(self._end_index)]
+            if self._start_index in target:
+                target = target[1:]
+            target = [self.vocab.get_token_from_index(idx.item()) for idx in target]
+
+            if hypo == target:
+                success = True
+
+        # selected_programs.append([hypo])
+        # if random.random() < 0.05:
+        #     print('prediction', hypo)
+
+        return success
+
+    def evaluate_calculation(self, top_k_predictions, choice_nums, source_nums):
+        hypo = None
+        choice = None
+        for i in range(self._beam_search.beam_size):
+            if choice is not None:
+                break
+            hypo = list(top_k_predictions[i])
+            if self._end_index in list(hypo):
+                hypo = hypo[:hypo.index(self._end_index)]
+            hypo = [self.vocab.get_token_from_index(idx.item()) for idx in hypo]
+
+            res = self._equ.excuate_equation(hypo, source_nums)
+            if res is not None and len(res) > 0:
+                for j in range(4):
+                    if choice_nums[j] is not None and math.fabs(res[-1] - choice_nums[j]) < 0.001:
+                        choice = j
+
+        # selected_programs.append([hypo])
+        # if random.random() < 0.05:
+        #     print('prediction', hypo)
+
+        return choice
+
+
     @staticmethod
     def _get_loss(logits: torch.LongTensor,
                   targets: torch.LongTensor,
@@ -632,8 +719,28 @@ class SimpleSeq2Seq(Model):
         all_metrics: Dict[str, float] = {}
         if self._bleu and not self.training:
             all_metrics.update(self._bleu.get_metric(reset=reset))
-        all_metrics.update({'acc': self._acc.get_metric(reset=reset)})
-        all_metrics.update({'no_result': self._no_result.get_metric(reset=reset)})
-        all_metrics.update({'mask_loss': self._mask_loss.get_metric(reset=reset)})
+
+        proving_acc = self.proving_acc.get_metric(reset=reset)
+        calculation_acc = self.calculation_acc.get_metric(reset=reset)
+        all_metrics.update({'acc': (proving_acc+calculation_acc)/2.})
+
+        all_metrics.update({'proving_acc': proving_acc})
+        all_metrics.update({'proving_no_result': self.proving_no_result.get_metric(reset=reset)})
+
+        all_metrics.update({'calculation_acc': calculation_acc})
+        all_metrics.update({'calculation_no_result': self.calculation_no_result.get_metric(reset=reset)})
+
+        # all_metrics.update({'mask_loss': self._mask_loss.get_metric(reset=reset)})
 
         return all_metrics
+
+    # @overrides
+    # def get_metrics(self, reset: bool = False) -> Dict[str, float]:
+    #     all_metrics: Dict[str, float] = {}
+    #     if self._bleu and not self.training:
+    #         all_metrics.update(self._bleu.get_metric(reset=reset))
+    #     all_metrics.update({'acc': self.proving_acc.get_metric(reset=reset)})
+    #     all_metrics.update({'no_result': self.proving_no_result.get_metric(reset=reset)})
+    #     all_metrics.update({'mask_loss': self._mask_loss.get_metric(reset=reset)})
+    #
+    #     return all_metrics
