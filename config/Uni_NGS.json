@@ -1,6 +1,6 @@
 {
   "dataset_reader": {
-    "type": "pretrain_reader_english",
+    "type": "Uni_reader_english",
     "tokenizer": {
       "word_splitter":{
         "type": "just_spaces"
@@ -17,23 +17,23 @@
       }
     },
   },
-//  "train_data_path": ["data/GeoQA_English/train.pk", "data/Proving/train.pk"],
-//  "validation_data_path": ["data/GeoQA_English/dev.pk", "data/Proving/dev.pk"],
-//  "test_data_path" : ["data/GeoQA_English/test.pk", "data/Proving/test.pk"],
-  "train_data_path": ["data/GeoQA_English/train.pk"],
-  "validation_data_path": ["data/GeoQA_English/dev.pk"],
-  "test_data_path" : ["data/GeoQA_English/test.pk"],
+  "train_data_path": ["data/Proving/train.pk", "data/GeoQA_English/train.pk"],
+  "validation_data_path": ["data/Proving/dev.pk", "data/GeoQA_English/dev.pk"],
+  "test_data_path" : ["data/Proving/test.pk", "data/GeoQA_English/test.pk"],
+//  "train_data_path": ["data/GeoQA_English/train.pk"],
+//  "validation_data_path": ["data/GeoQA_English/dev.pk"],
+//  "test_data_path" : ["data/GeoQA_English/test.pk"],
   "evaluate_on_test": true,
   "model": {
     "type": "geo_s2s",
-    "max_decoding_steps": 16,
+    "max_decoding_steps": 32,
     "beam_size": 10,
     "target_embedding_dim": 512,
     "scheduled_sampling_ratio": 0,
     "resnet_pretrained": "data/pretrain/best_jigsaw_model_state_dict",
 //    "resnet_pretrained": "None",
+    "solving_pretrained": "save/pretrain/mask001_whole_11292/best.th",
     "knowledge_points_ratio": 1,  // knowledge points
-    "mask_weight": 0,
     "source_embedder": {
       "token_embedders": {
         "tokens": {
