@@ -47,6 +47,8 @@ class SimpleSeq2Seq(Model):
                  target_embedding_dim: int = None,
                  scheduled_sampling_ratio: float = 0.,
                  resnet_pretrained = None,
+                 solving_pretrained = None,
+                 mask_weight = None,
                  use_bleu: bool = True) -> None:
         super(SimpleSeq2Seq, self).__init__(vocab)
 
@@ -80,20 +82,16 @@ class SimpleSeq2Seq(Model):
 
         if use_bleu:
             pad_index = self.vocab.get_token_index(self.vocab._padding_token, self._target_namespace)  # pylint: disable=protected-access
+            self.calculation_bleu = BLEU(ngram_weights=(1, 0, 0, 0), exclude_indices={pad_index, self._end_index, self._start_index})
             self._bleu = BLEU(ngram_weights=(1, 0, 0, 0), exclude_indices={pad_index, self._end_index, self._start_index})
         else:
+            self.calculation_bleu = None
             self._bleu = None
-        self._acc = Average()
-        self._no_result = Average()
+        self.calculation_acc = Average()
+        self.calculation_no_result = Average()
+        self.proving_acc = Average()
+        self.proving_no_result = Average()
         self._mask_loss = Average()
-
-        # remember to clear after evaluation
-        self.new_acc = []
-        self.angle = []
-        self.length = []
-        self.area = []
-        self.other = []
-        self.point_acc_list = []
 
         # At prediction time, we use a beam search to find the most likely sequence of target tokens.
         beam_size = beam_size or 1
@@ -158,6 +156,22 @@ class SimpleSeq2Seq(Model):
         # NLU pretraining
         self.mask_layer = nn.Linear(512, num_classes)
         self.mask_loss = nn.NLLLoss(reduction='none')
+        self.mask_weight = mask_weight if mask_weight is not None else 0
+
+        if solving_pretrained:
+            self.load_pretrain(solving_pretrained)
+
+    def load_pretrain(self, solving_pretrained):
+        solving_pretrained = torch.load(solving_pretrained)
+
+        # load part
+        new_dict = {}
+        for k, v in solving_pretrained.items():
+            if 'mcan' in k or 'encoder' in k:
+                new_dict[k] = v
+        print(new_dict.keys())
+        print('Load solving pretrained model')
+        self.load_state_dict(new_dict, strict=False)
 
     def take_step(self,
                   last_predictions: torch.Tensor,
@@ -202,7 +216,9 @@ class SimpleSeq2Seq(Model):
 
     @overrides
     def forward(self,  # type: ignore
-                image, # masked_text, mask_label,
+                image,
+                problem_form, masked_text, mask_label,
+                source_nums, choice_nums, label,
                 source_tokens: Dict[str, torch.LongTensor],
                 target_tokens: Dict[str, torch.LongTensor] = None, **kwargs) -> Dict[str, torch.Tensor]:
         # pylint: disable=arguments-differ
@@ -224,7 +240,8 @@ class SimpleSeq2Seq(Model):
         """
 
         bs = len(image)
-        state = self._encode(source_tokens)
+        # state = self._encode(source_tokens)
+        state = self._encode(masked_text)
 
         with torch.no_grad():
             img_feats = self.resnet(image)
@@ -235,11 +252,12 @@ class SimpleSeq2Seq(Model):
 
         lang_feats = state['encoder_outputs']
         # mask the digital encoding question without embedding, i.e. source_tokens(already index to number)
-        lang_mask = make_mask(source_tokens['tokens'].unsqueeze(2))
+        # lang_mask = make_mask(source_tokens['tokens'].unsqueeze(2))
+        lang_mask = make_mask(masked_text['tokens'].unsqueeze(2))
 
         _, img_feats = self.mcan(lang_feats, img_feats, lang_mask, img_mask)
 
-        # (N, 308, 512)
+        # (N, H*W+L, 512)
         # for attention, image first and then lang, using mask
         state['encoder_outputs'] = torch.cat([img_feats, lang_feats], 1)
 
@@ -251,74 +269,52 @@ class SimpleSeq2Seq(Model):
         # masked_state = self._encode(masked_text)
         # masked_lang_feats = masked_state['encoder_outputs']
         # mask_prediction = self.mask_layer(masked_lang_feats)
-        # mask_prediction = F.log_softmax(mask_prediction, dim=-1)
-        # mask_loss = self.mask_loss(mask_prediction.transpose(1, 2), source_tokens['tokens'][:, :mask_prediction.shape[1]])
-        # output_dict["mask_loss"] = torch.sum(mask_loss*mask_label)/len(mask_label)
-        # self._mask_loss(output_dict["mask_loss"].item())
-        # output_dict["loss"] += output_dict["mask_loss"]
-
-
+        mask_prediction = self.mask_layer(lang_feats)
+        mask_prediction = F.log_softmax(mask_prediction, dim=-1)
+        mask_loss = self.mask_loss(mask_prediction.transpose(1, 2), source_tokens['tokens'][:, :mask_prediction.shape[1]])
+        output_dict["mask_loss"] = torch.sum(mask_loss*mask_label)/len(mask_label) * self.mask_weight
+        self._mask_loss(output_dict["mask_loss"].item())
+        output_dict["loss"] += output_dict["mask_loss"]
 
         if not self.training:
             state = self._init_decoder_state(state, lang_feats, img_feats, img_mask)  # TODO
             predictions = self._forward_beam_search(state)
             output_dict.update(predictions)
 
-            if target_tokens and self._bleu:
+            if target_tokens and self.calculation_bleu:
                 # shape: (batch_size, beam_size, max_sequence_length)
                 top_k_predictions = output_dict["predictions"]
 
-                # execute the decode programs to calculate the accuracy
-                # suc_knt, no_knt = 0, 0
-                suc_knt, no_knt, = 0, 0
-
                 selected_programs = []
                 for b in range(bs):
-                    hypo = None
-                    success = None
-                    for i in range(self._beam_search.beam_size):
-                        if success is not None:
-                            break
-                        hypo = list(top_k_predictions[b][i])
-                        if self._end_index in list(hypo):
-                            hypo = hypo[:hypo.index(self._end_index)]
-
-                        target = list(target_tokens["tokens"][b])
-                        if self._end_index in target:
-                            target = target[:target.index(self._end_index)]
-                        if self._start_index in target:
-                            target = target[1:]
-                        hypo = [self.vocab.get_token_from_index(idx.item()) for idx in hypo]
-                        target = [self.vocab.get_token_from_index(idx.item()) for idx in target]
-
-                        # res = self._equ.excuate_equation(hypo, source_nums[b])
-                        # if res is not None and len(res) > 0:
-                        #     if answer[b] is not None and math.fabs(res[-1] - answer[b]) < 0.001:
-                        #         success = True
-
-                        if hypo == target:
-                            success = True
-
-                    selected_programs.append([hypo])
-
-                    if success is None:
-                        no_knt += 1
+                    if problem_form[b] is None:
+                        choice = self.evaluate_calculation(top_k_predictions[b], choice_nums[b], source_nums[b])
+                        if choice is None:
+                            # no_knt += 1
+                            self.calculation_acc(0)
+                            self.calculation_no_result(1.0)
+                        elif choice == label[b]:
+                            # suc_knt += 1
+                            self.calculation_acc(1.0)
+                            self.calculation_no_result(0)
+                        else:
+                            self.calculation_acc(0)
+                            self.calculation_no_result(0)
                     else:
-                        suc_knt += 1
-
-                if random.random() < 0.05:
-                    print('selected_programs', selected_programs)
+                        assert problem_form[b] == 'proving'
+                        success = self.evaluate_proving(top_k_predictions[b], target_tokens["tokens"][b])
+                        if success is None:
+                            # proving_no_knt += 1
+                            self.proving_acc(0)
+                            self.proving_no_result(1.0)
+                        else:
+                            # proving_suc_knt += 1
+                            self.proving_acc(1.0)
+                            self.proving_no_result(0)
 
                 # calculate BLEU
                 best_predictions = top_k_predictions[:, 0, :]
-                # print(top_k_predictions)
-                # print(best_predictions)
-                # print(target_tokens["tokens"])
-                # exit()
                 self._bleu(best_predictions, target_tokens["tokens"])
-                self._acc(suc_knt / bs)
-                self._no_result(no_knt / bs)
-
 
         return output_dict
 
@@ -571,6 +567,49 @@ class SimpleSeq2Seq(Model):
 
         return acc_sum
 
+    def evaluate_proving(self, top_k_predictions, target_tokens):
+        hypo = None
+        success = None
+        for i in range(self._beam_search.beam_size):
+            if success is not None:
+                break
+            hypo = list(top_k_predictions[i])
+            if self._end_index in list(hypo):
+                hypo = hypo[:hypo.index(self._end_index)]
+            hypo = [self.vocab.get_token_from_index(idx.item()) for idx in hypo]
+
+            target = list(target_tokens)
+            if self._end_index in target:
+                target = target[:target.index(self._end_index)]
+            if self._start_index in target:
+                target = target[1:]
+            target = [self.vocab.get_token_from_index(idx.item()) for idx in target]
+
+            if hypo == target:
+                success = True
+
+        return success
+
+    def evaluate_calculation(self, top_k_predictions, choice_nums, source_nums):
+        hypo = None
+        choice = None
+        for i in range(self._beam_search.beam_size):
+            if choice is not None:
+                break
+            hypo = list(top_k_predictions[i])
+            if self._end_index in list(hypo):
+                hypo = hypo[:hypo.index(self._end_index)]
+            hypo = [self.vocab.get_token_from_index(idx.item()) for idx in hypo]
+
+            res = self._equ.excuate_equation(hypo, source_nums)
+            if res is not None and len(res) > 0:
+                for j in range(4):
+                    if choice_nums[j] is not None and math.fabs(res[-1] - choice_nums[j]) < 0.001:
+                        choice = j
+
+        return choice
+
+
     @staticmethod
     def _get_loss(logits: torch.LongTensor,
                   targets: torch.LongTensor,
@@ -613,8 +652,17 @@ class SimpleSeq2Seq(Model):
         all_metrics: Dict[str, float] = {}
         if self._bleu and not self.training:
             all_metrics.update(self._bleu.get_metric(reset=reset))
-        all_metrics.update({'acc': self._acc.get_metric(reset=reset)})
-        all_metrics.update({'no_result': self._no_result.get_metric(reset=reset)})
+
+        proving_acc = self.proving_acc.get_metric(reset=reset)
+        calculation_acc = self.calculation_acc.get_metric(reset=reset)
+        all_metrics.update({'acc': (proving_acc+calculation_acc)/2.})
+
+        all_metrics.update({'proving_acc': proving_acc})
+        all_metrics.update({'proving_no_result': self.proving_no_result.get_metric(reset=reset)})
+
+        all_metrics.update({'calculation_acc': calculation_acc})
+        all_metrics.update({'calculation_no_result': self.calculation_no_result.get_metric(reset=reset)})
+
         all_metrics.update({'mask_loss': self._mask_loss.get_metric(reset=reset)})
 
         return all_metrics
