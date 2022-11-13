@@ -1,8 +1,5 @@
 # The name of experiment
-dir=NewPretrain
-name=test
-
-output=snap/Geo/$dir/$name
+output=snap/pretrain_test
 
 PYTHONPATH=$PYTHONPATH:./src \
 python -m torch.distributed.launch \
@@ -15,7 +12,7 @@ python -m torch.distributed.launch \
         --optim adamw \
         --warmup_ratio 0.1 \
         --lr 5e-4 \
-        --epochs 1 \
+        --epochs 20 \
         --batch_size 5 \
         --wordMaskRate 0.3 \
         --backbone 't5-base' \

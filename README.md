@@ -48,9 +48,9 @@ bash scripts/train.sh 1
 ```
 
 The pretrained checkpoint can be founded here ([pretrained.pth](https://drive.google.com/drive/folders/1NifdHLJe5U08u2Zb1sWL6C-8krpV2z2O?usp=share_link)).
-You can modify the following argument to change the pre-trained model.
+You can modify the following argument to change the path to pre-trained model.
 ```bash
---load path/pretrained
+--load snap/pretrained
 ```
 
 ## Pre-training
@@ -71,6 +71,6 @@ bash scripts/evaluate.sh 1
 The model checkpoint of the reported **Geoformer + Pretraining** can be founded here ([geoformer.pth](https://drive.google.com/drive/folders/1NifdHLJe5U08u2Zb1sWL6C-8krpV2z2O?usp=share_link)).
 You can modify the following argument to test *geoformer.pth* or your trained model.
 ```bash
---load $path/geoformer
+--load snap/geoformer
 ```
 

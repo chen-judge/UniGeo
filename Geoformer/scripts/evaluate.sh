@@ -1,5 +1,5 @@
 # inference
-output=snap/Geo/Uni/11111_lr2e-4_batch10_epoch100_max200
+output=snap/test
 
 PYTHONPATH=$PYTHONPATH:./src \
 python -m torch.distributed.launch \
@@ -17,8 +17,8 @@ python -m torch.distributed.launch \
         --num_workers 4 \
         --backbone 't5-base' \
         --output $output ${@:2} \
-        --load $output/Epoch58 \
+        --load $output/BEST \
         --num_beams 10 \
-        --batch_size 6 \
+        --batch_size 10 \
         --max_text_length 200 \
         --gen_max_length 40 \

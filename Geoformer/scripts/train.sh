@@ -1,7 +1,5 @@
 # The name of experiment
-dir=Uni
-name=11120_from06090_lr2e-4_b10_epoch100
-output=snap/Geo/$dir/$name
+output=snap/test
 
 PYTHONPATH=$PYTHONPATH:./src \
 python -m torch.distributed.launch \
@@ -23,4 +21,4 @@ python -m torch.distributed.launch \
         --num_beams 1 \
         --max_text_length 200 \
         --gen_max_length 40 \
-        --load /data1/chenjiaqi/Geo/Epoch53
+        --load snap/pretrained
