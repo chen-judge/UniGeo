@@ -1,4 +1,20 @@
+# UniGeo
 
+Jiaqi Chen, Tong Li, Jinghui Qin, Pan Lu, Liang Lin, Chongyu Chen, Xiaodan Liang. 
+"UniGeo: Unifying Geometry Logical Reasoning via Reformulating Mathematical Expression".
+Conference on Empirical Methods in Natural Language Processing (EMNLP 2022)
+
+We construct a large-scale Unified Geometry
+problem benchmark, UniGeo, which contains
+4,998 calculation problems and 9,543 proving
+problems.
+We also present a unified multitask
+Geometric Transformer framework, Geoformer,
+to tackle calculation and proving problems
+simultaneously in the form of sequence
+generation, which finally shows the reasoning
+ability can be improved on both two tasks by
+unifying formulation.
 
 ## Datasets
 Download the UniGeo dataset from [Google Drive](https://drive.google.com/drive/folders/1NifdHLJe5U08u2Zb1sWL6C-8krpV2z2O?usp=share_link).
